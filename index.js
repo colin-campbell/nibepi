@@ -49,7 +49,7 @@ const ensureConfig = require('./lib/ensureConfig').ensureConfig;
 const nibeExec = require('./lib/nibeExec').nibeExec;
 const path = "/etc/nibepi"
 
-const config = ensureConfig(path);
+let config = ensureConfig(path);
 
 
 function requireGraph(){ // force require
