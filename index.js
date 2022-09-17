@@ -27,14 +27,11 @@ const startCoreS = Core.startCoreS;
 const startNibeGW = Core.startNibeGW;
 const stopCore = require(__dirname+'/lib/stopCore');
 var log = require('./log');
-var child = require('child_process');
 const os = require('os').networkInterfaces();
 const crypto = require('crypto')
 const http = require('http');
 let ts_cloud = Date.now();
 var docker = false;
-let exec = child.exec;
-let spawn = child.spawn;
 let model = "";
 let rmu = {};
 let firmware = "";
@@ -44,37 +41,17 @@ let mqtt_subcribers = [];
 let mqttData = {};
 let mqttDiscoverySensors = [];
 let red = false;
-let config;
 const regQueue = [];
 const EventEmitter = require('events').EventEmitter
 const nibeEmit = new EventEmitter();
 const fs = require('fs');
+const ensureConfig = require('./lib/ensureConfig');
+const nibeExec = require('./lib/nibeExec');
 const path = "/etc/nibepi"
-if (!fs.existsSync(path)) {
-    exec(`sudo mount -o remount,rw / && sudo mkdir ${path} && sudo chown ${process.env.USER}:${process.env.USER} ${path}`, function(error, stdout, stderr) {
-        if(error) {
-            exec(`mkdir ${path} && chown ${process.env.USER}:${process.env.USER} ${path}`, function(error, stdout, stderr) {
-                if(error) {console.log('Error creating config directory')} else { console.log('Created config directory')}
-            });
-        } else {
-            console.log(`Configuration directory created ${path}`);
-        }
-    });
-}
 
-function requireF(modulePath){ // force require
-    try {
-     return require(modulePath);
-    }
-    catch (e) {
-        console.log('Config file not found, loading default.');
-        let conf = require(__dirname+'/default.json')
-        fs.writeFile(path+'/config.json', JSON.stringify(conf,null,2), function(err) {
-            if(err) console.log(err)
-        });
-        return conf;
-    }
-}
+const config = ensureConfig(path);
+
+
 function requireGraph(){ // force require
     const promise = new Promise((resolve,reject) => {
     try {
@@ -86,56 +63,40 @@ function requireGraph(){ // force require
 });
 return promise;
 }
-config = requireF(path+'/config.json');
+
 var timer;
 const saveGraph = (data) => {
     const promise = new Promise((resolve,reject) => {
     if(config.system===undefined || config.system.save_graph!==true) reject();
     if(data===undefined) reject(new Error('Cant save empty graph'));
-        
-    if(config.system===undefined) config.system = {};
-    if(config.log===undefined) config.log = {};
-            if(config.system.readonly===true) {
-                exec('sudo mount -o remount,rw /', function(error, stdout, stderr) {
-                    if(error) {
-                        reject(new Error('Error saving graph, could not set RW mode'));
-                    } else {
-                        fs.writeFile(path+'/graph.json', JSON.stringify(data,null,2), function(err) {
-                            if(err) reject(new Error('Error saving graph to disc, write error'));
-                            log(config.log.enable,"Graphs saved",config.log['info'],"Graph");
-                            nibeEmit.emit('fault',{from:"Grafer",message:'Graferna är sparade till SD-kort'});
-                            resolve('Graferna sparade till SD-kort')
-                            exec('sudo mount -o remount,ro /', function(error, stdout, stderr) {
-                                if(error) {
-                                    nibeEmit.emit('fault',{from:"Grafer",message:'Kunde inte sätta läsbart läge på filsystemet.'});
-                                    
-                                    reject(new Error('Error setting read-only mode after saving graph'));
-                                } else {
-                                    console.log('Read only mode set.')
-                                    resolve('Graferna är sparade till SD-kort och läsbart läge aktivt')
-                                }
-                            })
-                            
-                        }); 
-                    }
-                });
+    config.system ||= {};
+    config.log ||= {};
+
+        nibeExec('sudo mount -o remount,rw /', function(error, stdout, stderr) {
+            if(error) {
+                reject(new Error('Error saving graph, could not set RW mode'));
             } else {
-                exec('sudo mount -o remount,rw /', function(error, stdout, stderr) {
-                    if(error) {
-                        log(config.log.enable,"Could not open the system for write mode",config.log['error'],"Config");
-                        reject(new Error('Error saving graph, could not set RW mode'));
-                    } else {
-                        fs.writeFile(path+'/graph.json', JSON.stringify(data,null,2), function(err) {
-                            if(err) reject(new Error('Error saving graph to disc, write error'));
-                            nibeEmit.emit('fault',{from:"Grafer",message:'Graferna är sparade till SD-kort'});
-                            resolve('Graferna sparade till SD-kort')
-                        }); 
-                    }
+                fs.writeFile(path+'/graph.json', JSON.stringify(data,null,2), function(err) {
+                    if(err) reject(new Error('Error saving graph to disc, write error'));
+                    log(config.log.enable,"Graphs saved",config.log['info'],"Graph");
+                    nibeEmit.emit('fault',{from:"Grafer",message:'Graferna är sparade till SD-kort'});
+                    resolve('Graferna sparade till SD-kort')
+                    nibeExec('sudo mount -o remount,ro /', function(error, stdout, stderr) {
+                        if(error) {
+                            nibeEmit.emit('fault',{from:"Grafer",message:'Kunde inte sätta läsbart läge på filsystemet.'});
+                            reject(new Error('Error setting read-only mode after saving graph'));
+                        } else {
+                            console.log('Read only mode set.')
+                            resolve('Graferna är sparade till SD-kort och läsbart läge aktivt')
+                        }
+                    })
+
                 });
-                
             }
         });
-        return promise;
+
+    });
+    return promise;
 }
 let startingMQTT = false;
 const updateConfig = (data) => {
@@ -147,9 +108,9 @@ const updateConfig = (data) => {
 
             }
         })
-    
+
     nibeEmit.emit('config',config);
-   
+
     let run = false;
     if(timer!==undefined && timer._idleTimeout>0) {
         clearTimeout(timer);
@@ -163,17 +124,17 @@ const updateConfig = (data) => {
                 if(config.system===undefined) config.system = {};
                 if(config.log===undefined) config.log = {};
                 if(config.system.readonly===true && docker===false) {
-                    exec('sudo mount -o remount,rw /', function(error, stdout, stderr) {
+                    nibeExec('sudo mount -o remount,rw /', function(error, stdout, stderr) {
                         if(error) {
                             log(config.log.enable,"Could not open the system for write mode",config.log['error'],"Config");
                             return(false);
                         } else {
-                            
+
                             fs.writeFile(path+'/config.json', JSON.stringify(data,null,2), function(err) {
                                 if(err) return (false);
                                 log(config.log.enable,"Config file saved",config.log['info'],"Config");
                                 nibeEmit.emit('fault',{from:"Inställningar",message:'Inställningarna är sparade till SD-kort'});
-                                exec('sudo mount -o remount,ro /', function(error, stdout, stderr) {
+                                nibeExec('sudo mount -o remount,ro /', function(error, stdout, stderr) {
                                     if(error) {
                                         nibeEmit.emit('fault',{from:"Inställningar",message:'Kunde inte sätta läsbart läge på filsystemet.'});
                                         log(config.log.enable,"Could not set read-only mode.",config.log['error'],"Config");
@@ -184,43 +145,11 @@ const updateConfig = (data) => {
                                         return (true)
                                     }
                                 })
-                                
-                            }); 
+
+                            });
                         }
                     });
-                } else {
-                    if(docker===false) {
-                        exec('sudo mount -o remount,rw /', function(error, stdout, stderr) {
-                            if(error) {
-                                log(config.log.enable,error,config.log['error'],"Config");
-                                return(false);
-                            } else {
-                                fs.writeFile(path+'/config.json', JSON.stringify(data,null,2), function(err) {
-                                    if(err) {
-                                        log(config.log.enable,err,config.log['error'],"Config");
-                                        return (false);
-                                    }
-                                    nibeEmit.emit('fault',{from:"Inställningar",message:'Inställningarna är sparade till SD-kort'});
-                                    log(config.log.enable,"Config file saved",config.log['info'],"Config");
-                                    return (true)
-                                }); 
-                            }
-                        });
-                    } else if(docker===true) {
-                        fs.writeFile(path+'/config.json', JSON.stringify(data,null,2), function(err) {
-                            if(err) {
-                                log(config.log.enable,err,config.log['error'],"Config");
-                                return (false);
-                            }
-                            nibeEmit.emit('fault',{from:"Inställningar",message:'Inställningarna är sparade till SD-kort'});
-                            log(config.log.enable,"Config file saved",config.log['info'],"Config");
-                            return (true)
-                        }); 
-                    }
-                    
-                    
                 }
-                
             }
         }, 5000);
     }
@@ -233,36 +162,35 @@ const resetCore = () => {
     firmware = "";
 }
 const initiateCore = (host,port,cb) => {
-    if(config.log===undefined) config.log = {};
-    if(docker===false) {
-        if(config.system.readonly===true) {
-            exec('sudo mount -o remount,ro /', function(error, stdout, stderr) {
-                if(error) {
-                    log(config.log.enable,"Could not set read-only mode at startup.",config.log['error'],"Startup");
-                    return(false);
-                } else {
-                    console.log('Read only mode set.')
-                    return (true)
-                }
-            })
-        } else {
-            exec('sudo mount -o remount,rw /', function(error, stdout, stderr) {
-                if(error) {
-                    log(config.log.enable,"Could not set write mode at startup.",config.log['error'],"Startup");
-                    return(false);
-                } else {
-                    return (true)
-                }
-            })
-        }
+    config.log ||= {};
+    if(config.system.readonly===true) {
+        nibeExec('sudo mount -o remount,ro /', function(error, stdout, stderr) {
+            if(error) {
+                log(config.log.enable,"Could not set read-only mode at startup.",config.log['error'],"Startup");
+                return(false);
+            } else {
+                console.log('Read only mode set.')
+                return (true)
+            }
+        })
+    } else {
+        nibeExec('sudo mount -o remount,rw /', function(error, stdout, stderr) {
+            if(error) {
+                log(config.log.enable,"Could not set write mode at startup.",config.log['error'],"Startup");
+                return(false);
+            } else {
+                return (true)
+            }
+        })
     }
+
 
 if(config.connection!==undefined && config.connection.series!==undefined) {
     if(config.connection.series=="fSeries") {
         if(config.connection.enable=="serial") {
             startCore(port).then(result => {
                 core = result;
-                
+
                 core.on('message', (m) => {
                     if(m.type=="data") {
                         let n = m.data;
@@ -272,7 +200,7 @@ if(config.connection!==undefined && config.connection.series!==undefined) {
                                 config.serial.port = port;
                                 cb(null,result);
                             } else {
-        
+
                             }
                         });
                         decodeRMU(n);
@@ -293,7 +221,7 @@ if(config.connection!==undefined && config.connection.series!==undefined) {
         } else if(config.connection.enable=="nibegw") {
             startNibeGW(port).then(result => {
                 core = result;
-                
+
                 core.on('message', (m) => {
                     if(m.type=="data") {
                         let n = m.data;
@@ -303,7 +231,7 @@ if(config.connection!==undefined && config.connection.series!==undefined) {
                                 config.serial.port = port;
                                 cb(null,result);
                             } else {
-        
+
                             }
                         });
                         decodeMessage(n);
@@ -321,7 +249,7 @@ if(config.connection!==undefined && config.connection.series!==undefined) {
                   });
             });
         }
-        
+
     } else if(config.connection.series=="sSeries") {
                     startCoreS(host,port).then(result => {
                         core = result;
@@ -348,9 +276,9 @@ if(config.connection!==undefined && config.connection.series!==undefined) {
                                             }
                                         }
                                     }
-                                    
+
                                 }
-                                
+
                                 if(data===true) {
                                     cb(null,result);
                                 }
@@ -373,7 +301,7 @@ if(config.connection!==undefined && config.connection.series!==undefined) {
                     });
     }
 }
-    
+
 }
 
 
@@ -417,9 +345,9 @@ const announcment = (msg,cb) => {
             updateID(model,firmware);
             console.log(`Heatpump is not supported ${model}`)
         }
-        
+
     } else if(msg.data[3]==109) {
-        
+
         let index = register.findIndex(i => i.register == 45001);
         if(index!==-1) {
             reqData(45001).then(atad => {
@@ -430,10 +358,10 @@ const announcment = (msg,cb) => {
                 }
             }).catch(console.log)
         }
-        
+
         //console.log(`Announcement message`);
         if(model=="") {
-            checkPump(msg.data, function(err) { 
+            checkPump(msg.data, function(err) {
                 if(err) throw err;
                 let reg = require(`./models/${model}.json`);
                 for (i = 0; i < reg.length; i = i + 1) {
@@ -521,7 +449,7 @@ async function reqData (address) {
                 } else {
                     reject(new Error('Register ('+address+') returned no data.'));
                 }
-                
+
             }, 7000, address,index);
             if((register[index]===undefined && config.system.testmode===true) || register[index].logset===undefined || register[index].logset===false) {
                 var data = [];
@@ -564,7 +492,7 @@ async function reqData (address) {
             } else {
                 reject(new Error('Register ('+address+') not in database'));
             }
-            
+
         });
         return promise;
     }
@@ -590,13 +518,13 @@ async function reqData (address) {
                     reject(err)
                 });
             }
-            
+
         } else {
             reject(new Error('Core is not started.'))
         }
     });
     return promise;
-    
+
 }
 
 
@@ -620,7 +548,7 @@ const setData = (address,value,cb=()=>{}) => {
                 core.send({type:"setData",data:output});
                 reqData(address).catch(console.log)
             }
-            
+
         }
     } else {
         setTimeout((data,address) => {
@@ -655,7 +583,7 @@ function getData(address) {
         } else if(config.connection.enable!==undefined && config.connection.enable=="tcp") {
             return(address);
         }
-            
+
     } else {
         console.log('Register('+address+') not in database');
         return;
@@ -705,7 +633,7 @@ function setDataValue(incoming) {
                         rmu.data[4] = (value & 0xFF);
                         rmu.data[5] = ((value >> 8) & 0xFF);
                         rmu.data[6] = Calc_CRC(rmu.data);
-                    } 
+                    }
                     rmu.ackback[0] = 92;
                     rmu.ackback[1] = 0;
                     rmu.ackback[2] = (Number(item.register.charAt(2))+25);
@@ -889,7 +817,7 @@ const decodeRMU = (buf) => {
         data[4] = data.length;
         decodeMessage(data);
         /*
-        if(i===26) address = 10011; 
+        if(i===26) address = 10011;
         if(i===27) address = 10012;*/
     }
 }
@@ -909,9 +837,9 @@ const addRegular = (address) => {
             log(config.log.enable,`Regular register added (${address})`,config.log['info'],"Register");
             core.send({type:"regRegister",data:regQueue});
         }
-        
+
         //
-        
+
     }
 } else {
     setTimeout((data) => {
@@ -952,7 +880,7 @@ async function decodeS(data) {
         else if (register[index].size == "s16") {
             if (data >= 32768) {
                 data = data - 65536;
-            }          
+            }
         }
         else if (register[index].size == "s8") {
             if (data > 128 && data < 32768) {
@@ -1011,8 +939,8 @@ async function decodeS(data) {
     }
 }
 const decodeMessage = (buf) => {
-    
-    
+
+
     if(register.length===0) return;
     if(buf[3]!==104 && buf[3]!==106 && buf[3]!==98 && buf[3]!==96) return;
     var data;
@@ -1027,12 +955,12 @@ const decodeMessage = (buf) => {
                 if(register[index].logset===true) {
                     removeRegular(address);
                 }
-            } 
+            }
             //log('info',`Register: ${register[index].register} found at index ${index}, ${JSON.stringify(register[index])}`)
             if (register[index].size == "s32") {
                 if (buf[3]===104) {
                     data = buf[i + 2] | buf[i + 3]<<8 | buf[i + 6] <<16 | buf[i + 7] <<24;
-                    
+
                     if (data >= 2147483647) {
                         data = (data - 4294967294);
                     }
@@ -1041,7 +969,7 @@ const decodeMessage = (buf) => {
                 else {
                     data = buf[i + 4] | buf[i + 5] <<8 | buf[i + 2] <<16 | buf[i + 3] <<24;
                     //data = buf[i + 2] | buf[i + 3] <<8 | buf[i + 4] <<16 | buf[i + 5] <<24;
-                    
+
                     if (data >= 2147483647) {
                         data = (data - 4294967294);
                     }
@@ -1050,15 +978,15 @@ const decodeMessage = (buf) => {
             }
             else if (register[index].size == "s16") {
                 data = (buf[i + 3] & 0xFF) << 8 | (buf[i + 2] & 0xFF);
-                
+
                 i = i + 3;
                 if (data >= 32768) {
                     data = data - 65536;
-                }          
+                }
             }
             else if (register[index].size == "s8") {
                 data = (buf[i + 3] & 0xFF) << 8 | (buf[i + 2] & 0xFF);
-                
+
                 i = i + 3;
                 if (data > 128 && data < 32768) {
                     data = data - 256;
@@ -1070,7 +998,7 @@ const decodeMessage = (buf) => {
                 if (buf[3]===104) {
                     data = buf[i + 2] | buf[i + 3]<<8 | buf[i + 6] <<16 | buf[i + 7] <<24;
                     data = data>>>0;
-                    
+
                     i = i + 7;
                 }
                 else {
@@ -1078,18 +1006,18 @@ const decodeMessage = (buf) => {
                     //data = (buf[i + 2] & 0xFF) | (buf[i + 3] & 0xFF) << 8 | (buf[i + 4] & 0xFF) << 16 | (buf[i + 5] & 0xFF) << 24;
                     //data = (buf[i + 2] & 0xFF) << 16 | (buf[i + 3] & 0xFF) << 24 | (buf[i + 4] & 0xFF) | (buf[i + 5] & 0xFF) << 8; Old way
                     data = data>>>0;
-                    
+
                     i = i + 5;
                 }
             }
             else if (register[index].size == "u16") {
                 data = (buf[i + 3] & 0xFF) << 8 | (buf[i + 2] & 0xFF);
-                
+
                 i = i + 3;
             }
             else if (register[index].size == "u8") {
                     data = (buf[i + 3] & 0xFF) << 8 | (buf[i + 2] & 0xFF);
-                    
+
                     i = i + 3;
             }
             else {
@@ -1103,7 +1031,7 @@ const decodeMessage = (buf) => {
                     var mapValue = Object.values(map[y]);
                     if (Number(Object.keys(map[y])) == data) {
                         valueMap = mapValue[0];
-                        
+
                     }
                 }
             }
@@ -1129,7 +1057,7 @@ const decodeMessage = (buf) => {
                 register[index].raw_data = data;
                 register[index].timestamp = timeNow;
                 nibeEmit.emit('data',register[index]);
-                
+
                 nibeEmit.emit(address,register[index]);
                 addMQTTdiscovery(register[index]);
                 publishMQTT(config.mqtt.topic+address+"/json",JSON.stringify(register[index]))
@@ -1143,7 +1071,7 @@ const decodeMessage = (buf) => {
             i = i + 3;
         }
     }
-    
+
     if(regQueue.length===0 && buf[3]===104) {
         for (var i = 0; i < config.registers.length; i++) {
             addRegular(config.registers[i]);
@@ -1190,7 +1118,7 @@ function startMQTT(host,port,user,pass) {
     if(mqtt_username!==undefined) mqtt_Options.username = mqtt_username
     if(mqtt_password!==undefined) mqtt_Options.password = mqtt_password
     mqtt_client = mqtt.connect('mqtt://' + mqtt_host, mqtt_Options);
-    
+
     mqtt_client.on('connect', function () {
         nibeEmit.emit('fault',{from:"MQTT",message:'MQTT Brokern är ansluten'});
         console.log("MQTT Broker is connected.")
@@ -1230,9 +1158,9 @@ async function addMQTTdiscovery(data) {
 
                 }));
             }
-            
+
         } else {
-    
+
         }
     } else {
         removeMQTTdiscovery(data);
@@ -1271,7 +1199,7 @@ function formatMQTTdiscovery(data) {
             result.type = undefined;
             result.unit = undefined;
         } else {
-            
+
         }
         resolve(result)
     });
@@ -1378,7 +1306,7 @@ const publishMQTT = (topic,message,retain=false) => {
             mqtt_client.publish(topic, message.toString(),{retain:retain});
         }
     }
-    
+
 }
 const publishMQTTpromise = (topic,message,retain=false) => {
     const promise = new Promise((resolve,reject) => {
@@ -1462,7 +1390,7 @@ const writeLog = (data,plugin,level) => {
     if(config.log[plugin]!==undefined) {
         log(config.log.enable,data,config.log[plugin],from);
     }
-    
+
     return;
 }
 const setDocker = (cmd) => {
@@ -1476,7 +1404,7 @@ const updateID = (model,firmware) => {
     }
 }
 function sendID(dev,model,firmware) {
-    
+
     let mac = os[dev][0].mac.substr(os[dev][0].mac.length - 8)
     let hash = crypto.createHash('md5').update(mac).digest("hex")
     let shortHash = hash.substr(hash.length - 10)
@@ -1505,7 +1433,7 @@ function sendID(dev,model,firmware) {
         // Write data to request body
         res.on('data', (d) => {
             process.stdout.write(d+"\n")
-        
+
   	})
 
 });
