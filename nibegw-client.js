@@ -45,7 +45,7 @@ process.on('message', (m) => {
         console.log('Shutting down the core.')
         process.exit(99);
       }
-    
+
   });
 //start()
 function write(data) {
@@ -65,11 +65,15 @@ function read(data) {
     });
     }
 function start() {
-    server.bind(PORT, "0.0.0.0");
+    server.bind({
+        port: PORT,
+        address: '0.0.0.0',
+        exclusive: false
+    });
     server.on('listening', function() {
         var address = server.address();
        console.log('NibeGW client is listening on ' + HOST + ':' + address.port);
-      });      
+      });
     server.on('message', function(message, remote) {
         makeResponse(Buffer.from(message)).then(result => {
                 result = Array.from(result);
@@ -93,8 +97,8 @@ function start() {
                     process.send({type:"log",data:result,level:"debug",kind:"OK"});
                 }
         }, err => {
-    
-        })    
+
+        })
     });
 }
 
@@ -102,7 +106,7 @@ function start() {
 const makeResponse = (data) => {
     const promise = new Promise((resolve,reject) => {
     // Read from heatpump
-    
+
     if(data[3]==105 && data[4]==0x00) {
         if(getQueue!==undefined && getQueue.length!==0) {
             /*
@@ -110,11 +114,11 @@ const makeResponse = (data) => {
             for (i = 0; i < getQueue.length; i = i + 1) {
                 array[i] = (getQueue[i][4]*256)+getQueue[i][3];
             }
-            
+
             console.log(JSON.stringify(array))
             */
             var lastMsg = getQueue.pop();
-            
+
             if(lastMsg!==undefined) {
                 read(lastMsg)
                 resolve(data);
