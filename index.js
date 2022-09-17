@@ -45,8 +45,8 @@ const regQueue = [];
 const EventEmitter = require('events').EventEmitter
 const nibeEmit = new EventEmitter();
 const fs = require('fs');
-const ensureConfig = require('./lib/ensureConfig');
-const nibeExec = require('./lib/nibeExec');
+const ensureConfig = require(__dirname +'/lib/ensureConfig');
+const nibeExec = require(__dirname + '/lib/nibeExec');
 const path = "/etc/nibepi"
 
 const config = ensureConfig(path);
