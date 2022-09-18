@@ -31,7 +31,6 @@ const interfaces = require('os').networkInterfaces();
 const crypto = require('crypto')
 const http = require('http');
 let ts_cloud = Date.now();
-var docker = false;
 let model = "";
 let rmu = {};
 let firmware = "";
@@ -47,6 +46,7 @@ const nibeEmit = new EventEmitter();
 const fs = require('fs');
 const ensureConfig = require('./lib/configHandler');
 const nibeExec = require('./lib/execHandler');
+const isContainer = require('./lib/containerHandler');
 const path = "/etc/nibepi"
 
 let config = ensureConfig(path);
@@ -123,7 +123,7 @@ const updateConfig = (data) => {
             if(JSON.stringify(data).length>2) {
                 if(config.system===undefined) config.system = {};
                 if(config.log===undefined) config.log = {};
-                if(config.system.readonly===true && docker===false) {
+                if(config.system.readonly===true) {
                     nibeExec('sudo mount -o remount,rw /', function(error, stdout, stderr) {
                         if(error) {
                             log(config.log.enable,"Could not open the system for write mode",config.log['error'],"Config");
@@ -1393,12 +1393,9 @@ const writeLog = (data,plugin,level) => {
 
     return;
 }
-const setDocker = (cmd) => {
-    docker = cmd;
-}
+
 const updateID = (model,firmware) => {
     const dev = Object.values(interfaces).find(e => e[0].internal === false);
-    console.log(dev[0]);
     sendID(dev[0],model,firmware)
 }
 function sendID(dev,model,firmware) {
@@ -1476,6 +1473,6 @@ module.exports = {
     log:writeLog,
     saveGraph:saveGraph,
     requireGraph:requireGraph,
-    setDocker:setDocker,
+    isContainer:isContainer,
     refreshConfig:refreshConfig
 }
