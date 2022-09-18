@@ -27,7 +27,7 @@ const startCoreS = Core.startCoreS;
 const startNibeGW = Core.startNibeGW;
 const stopCore = require(__dirname+'/lib/stopCore');
 var log = require('./log');
-const os = require('os').networkInterfaces();
+const interfaces = require('os').networkInterfaces();
 const crypto = require('crypto')
 const http = require('http');
 let ts_cloud = Date.now();
@@ -45,8 +45,8 @@ const regQueue = [];
 const EventEmitter = require('events').EventEmitter
 const nibeEmit = new EventEmitter();
 const fs = require('fs');
-const ensureConfig = require('./lib/configHandler').ensureConfig;
-const nibeExec = require('./lib/execHandler').nibeExec;
+const ensureConfig = require('./lib/configHandler');
+const nibeExec = require('./lib/execHandler');
 const path = "/etc/nibepi"
 
 let config = ensureConfig(path);
@@ -1397,15 +1397,12 @@ const setDocker = (cmd) => {
     docker = cmd;
 }
 const updateID = (model,firmware) => {
-    if(os['wlan0']!==undefined) {
-        sendID('wlan0',model,firmware)
-    } else if(os['eth0']!==undefined) {
-        sendID('eth0',model,firmware)
-    }
+    const dev = interfaces.find(e => e.internal !== false);
+    sendID(dev,model,firmware)
 }
 function sendID(dev,model,firmware) {
 
-    let mac = os[dev][0].mac.substr(os[dev][0].mac.length - 8)
+    let mac = dev.mac.substr(dev.mac.length - 8)
     let hash = crypto.createHash('md5').update(mac).digest("hex")
     let shortHash = hash.substr(hash.length - 10)
     if(config.system!==undefined && (config.system.id===undefined || config.system.id===0)) {
@@ -1440,11 +1437,11 @@ function sendID(dev,model,firmware) {
 req.on('socket', function(socket) {
     socket.setTimeout(5000, function () {   // set short timeout so discovery fails fast
         //console.log('Timeout connecting to ' + options.hostname);
-        req.abort();    // kill socket
+        req.destroy();    // kill socket
     });
     socket.on('error', function (err) { // this catches ECONNREFUSED events
         //console.log('Connection refused connecting to ' + options.hostname);
-        req.abort();    // kill socket
+        req.destroy();    // kill socket
     });
 }); // handle connection events and errors
 req.on("error", (err) => {
