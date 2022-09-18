@@ -32,7 +32,7 @@ process.on('exit', function(code) {
         config.fan=undefined;
         nibe.setConfig(config);
     }
-    nibe.setDocker(true);
+
     if(config.connection!==undefined) {
         if(config.connection.enable=="serial") {
             if(config.serial!==undefined && config.serial.port!==undefined && config.serial.port!=="") {
@@ -61,7 +61,7 @@ process.on('exit', function(code) {
                 process.exit(-1);
             }
         } else if(config.connection.enable=="tcp") {
-            
+
         }
     }
     if(config.mqtt!==undefined) {
