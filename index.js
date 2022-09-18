@@ -1397,7 +1397,7 @@ const setDocker = (cmd) => {
     docker = cmd;
 }
 const updateID = (model,firmware) => {
-    const dev = Object.entries(interfaces).find(e => console.log(e[1]));
+    const dev = Object.entries(interfaces).find(e => console.log(e[1][0]));
 
     sendID(dev[1],model,firmware)
 }
